@@ -1,2 +1,61 @@
 # Leave-one-out-cross-validation
 Leave-one-out-cross validation with limma models on clinical data
+
+
+
+Input data frame:
+
+data.loocv.comp.t <- structure(list(hsa_let_7a_2_3p = c(0, 0, 0, 0, 0), hsa_let_7a_3p = c(33, 
+0, 6, 113, 1), hsa_let_7a_5p = c(37663, 17771, 23868, 27740, 
+3527), hsa_let_7b_3p = c(291, 92, 21, 245, 6), hsa_let_7b_5p = c(47406, 
+27612, 20034, 16414, 4416), Group = c("T1", "T2", "T1", "T1", 
+"T2"), BMI = c(29.9, 27.1, 32.7, 24.9, 30.2), BirthYear = c(1957, 
+1948, 1951, 1954, 1946), Sex = c(1, 1, 1, 0, 1)), class = "data.frame", row.names = c("1004773522", 
+"1108651363", "1170306251", "1170306252", "1170306253"))
+
+
+LOOCV function:
+
+loocv.complete2 <- sapply(1:nrow(data.loocv.comp.t), function(x) {
+  loo.data <- data.loocv.comp.t[-x,]
+  
+  Data.exp.dge <- DGEList(as.data.frame(t(loo.data[,grep("hsa",colnames(loo.data))]))) #Create a DGEList-object based on the data frame with "hsa" in the colnames. This removes "Group"  "BMI" "BirthYear" "Sex" from the dataframe.
+  keep <- rowSums(Data.exp.dge$counts>1) >= dim(Data.exp.dge)[2]
+  Data.exp.dge <- Data.exp.dge[keep,
+  Data.exp.dge <- calcNormFactors(Data.exp.dge, method="TMM") 
+  des <- model.matrix(~0+factor(loo.data$Group)+loo.data$Sex+loo.data$BirthYear+loo.data$BMI) 
+  colnames(des) <- c("T2","T1","Sex","BirthYear","BMI") 
+  head(des)
+  dim(des)
+  v <- voom(Data.exp.dge,plot = T,design = des) 
+  fit <- lmFit(v, design=des)
+  contrasts <- makeContrasts(T2_vs_T1=T2-T1,
+                             levels=des) 
+  fit2 <- contrasts.fit(fit, contrasts=contrasts)
+  fit2 <- eBayes(fit2)
+  colSums(decideTests(fit2)!=0)
+  res <- as.data.frame(topTable(fit2,coef="T2_vs_T1",sort.by="P",adjust.method="BH",n=Inf))
+  head(res)
+  selected1 <- as.data.frame(res[res$adj.P.Val <0.05,]) #Select miRNAs significant after multiple testing to be included in the model
+  selected2 <- as.data.frame((res[res$P.Value <0.05,])) #This step is added in those cases where no significant miRNAs after multiple testing are detected.
+  
+  selected <- if (dim(selected1)[1]>0) {
+    rownames(selected1)
+  } else {
+    rownames(selected2)
+  }
+  selected <- gsub("-","_",selected)
+  
+  candidate.mirs <- as.formula(paste0('~',paste0(selected, collapse = '+')))
+  candidate.mirs <- as.formula(paste0("as.factor(loo.data$Group)",paste0('~',paste0(selected, collapse = '+'))))
+  
+  
+  model <- glm(candidate.mirs, family=binomial(logit),data=loo.data)
+  predict(model,newdata=data.loocv.comp.t[x,],type=c("link"))
+  list(mirs=candidate.mirs, model=model, prediction=predict(model,newdata=data.loocv.comp.t[x,], type = "link"))
+  
+})
+loocv.complete2[2,]
+
+g <- roc(data.loocv.comp.t$Group,predictor = unlist(loocv.complete2[3,]), data = data.loocv.comp.t)
+plot.roc(g,print.auc=TRUE,print.auc.col = "#1c61b6")
