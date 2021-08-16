@@ -1,0 +1,32 @@
+
+# "data" is you expression matrix containg Status, Time and ISS (or other clinical parameters).  
+
+loocv.model <- sapply(1:nrow(data), function(x) {
+  loo.data <- data[-x,]
+  
+  coxph.out  <- capture.output(for(i in setdiff(colnames(loo.data), c("Time", "Status"))) {
+    print(summary(coxph(as.formula(paste0("Surv(loo.data$Time, loo.data$Status)~", i, "+ISS" )),  data=loo.data))) 
+  })
+  
+  coxph.out <- as.matrix(as.list(coxph.out)[grep("hsa|URS", as.list(coxph.out))])  
+  coxph.out <- as.data.frame(gsub("\\s+", " ", coxph.out)  )      
+  toDelete <- seq(1, nrow(coxph.out), 2)
+  coxph.out <- as.data.frame(coxph.out[ toDelete ,])
+  coxph.out <- splitstackshape::cSplit(coxph.out, 'coxph.out[toDelete, ]', sep = ' ')
+  colnames(coxph.out)  <- c("ncRNA","coef","hz","se_coef","z","p_val","Sign")
+  
+  coxph.out.lncRNA <- coxph.out[grep("lncRNA",coxph.out$ncRNA),]
+  coxph.out.miRNA <- coxph.out[grep("hsa",coxph.out$ncRNA),]
+  
+  selected.lncRNA <- coxph.out.lncRNA$p_val <= 0.05
+  selected.miRNA <- coxph.out.miRNA$p_val <= 0.05
+  
+  selected.lncRNA <- head(coxph.out.lncRNA[selected.lncRNA,][order(coxph.out.lncRNA[selected.lncRNA,]$p_val),]$ncRNA, 5)
+  selected.miRNA <- head(coxph.out.miRNA[selected.miRNA,][order(coxph.out.miRNA[selected.miRNA,]$p_val),]$ncRNA, 5)
+  
+  
+  FML <- as.formula(paste0('~',paste(fct_c(selected.lncRNA,selected.miRNA), collapse = '+')))
+  model <- coxph(update.formula(Surv(loo.data$Time, loo.data$Status)~., FML , "+ISS"), data = loo.data)
+}, simplify = FALSE)
+
+
